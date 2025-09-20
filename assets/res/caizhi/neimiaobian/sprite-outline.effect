@@ -1,0 +1,102 @@
+// Effect Syntax Guide: https://docs.cocos.com/creator/manual/zh/shader/index.html
+
+CCEffect %{
+  techniques:
+  - name: transparent
+    passes:
+    - vert: vs:vert 
+      frag: fs:frag
+      depthStencilState:
+        depthTest: false
+        depthWrite: false
+      blendState:
+        targets:
+        - blend: true
+          blendSrc: src_alpha
+          blendDst: one_minus_src_alpha
+      rasterizerState:
+        cullMode: none
+      properties: &props
+        _OutlineColor: {value: [1, 1, 1, 1], editor: { type: color }}
+        _OutlineSize: {value: 1.0}
+        _TexelSize: {value: [0, 0, 0, 0]}
+}%
+
+CCProgram vs %{
+  precision highp float;
+  #include <builtin/uniforms/cc-global>
+  #if USE_LOCAL
+    #include <builtin/uniforms/cc-local>
+  #endif  
+
+  #include <common/common-define>
+
+  in vec3 a_position;
+  in vec2 a_texCoord;
+  in vec4 a_color;
+
+  out vec2 v_uv;
+  out vec4 v_color;
+
+  vec4 vert () {
+    vec4 pos = vec4(a_position, 1);
+    #if USE_LOCAL
+      pos = cc_matWorld * pos;
+    #endif
+
+    pos = cc_matViewProj * pos;
+    v_uv = a_texCoord;
+    v_color = a_color;
+    return pos;
+  }
+}%
+
+CCProgram fs %{
+  precision highp float;
+  #include <legacy/output>
+  #include <builtin/uniforms/cc-global>
+
+  in vec2 v_uv;
+  in vec4 v_color;
+
+   #pragma builtin(local)
+  layout(set = 2, binding = 12) uniform sampler2D cc_spriteTexture;
+
+  uniform Constant {
+    vec4 _OutlineColor;
+    vec4 _TexelSize;
+    float _OutlineSize;
+  };
+
+  float checkOutline(vec2 baseUv, vec2 offsetUv, float minAlpha) {
+    vec2 uv = baseUv + offsetUv * _TexelSize.xy * _OutlineSize;
+    vec4 col = texture(cc_spriteTexture, uv);
+    float a = col.a;
+    float isEdge = step(uv.x, 0.0) + step(1.0, uv.x) + step(uv.y, 0.0) + step(1.0, uv.y);
+    isEdge = step(1.0, isEdge);
+    a *= (1.0 - isEdge);
+    return min(a, minAlpha);
+  }
+
+  vec4 frag () {
+    vec4 col = texture(cc_spriteTexture, v_uv);
+    
+    #if SHOW_OUTLINE
+    float minAlpha = checkOutline(v_uv, vec2(1, 0), 1.0);
+    minAlpha = checkOutline(v_uv, vec2(0, 1), minAlpha);
+    minAlpha = checkOutline(v_uv, vec2(-1, 0), minAlpha);
+    minAlpha = checkOutline(v_uv, vec2(0, -1), minAlpha);
+    minAlpha = checkOutline(v_uv, vec2(1, 1), minAlpha);
+    minAlpha = checkOutline(v_uv, vec2(-1, 1), minAlpha);
+    minAlpha = checkOutline(v_uv, vec2(-1, -1), minAlpha);
+    minAlpha = checkOutline(v_uv, vec2(1, -1), minAlpha);
+    minAlpha = step(minAlpha, 0.0);
+
+    col.rgb = mix(col.rgb, _OutlineColor.rgb, minAlpha);
+    #endif
+
+    col *= v_color;
+    
+    return CCFragOutput(col);
+  }
+}%
